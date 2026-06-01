@@ -1,0 +1,64 @@
+services:
+  # PostgreSQL + pgvector
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: atlasdb
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres123}
+      POSTGRES_DB: ${DB_NAME:-atlasdb}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql  # اختياري: لإعداد الـ extension تلقائياً
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # MinIO (لتخزين الملفات والكورسات)
+  minio:
+    image: minio/minio:latest
+    container_name: notes-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:-minioadmin123}
+    ports:
+      - "9000:9000"  # API port
+      - "9001:9001"  # Console port
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # Ollama (تشغيل embedding models فقط)
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: notes-ollama
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama_data:/root/.ollama
+  #   environment:
+  #     - OLLAMA_HOST=0.0.0.0
+  #     - OLLAMA_KEEP_ALIVE=24h  # يخلي النموذج محمل في الذاكرة
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         memory: 2G  # تحديد استخدام الذاكرة
+  #   healthcheck:
+  #     test: ["CMD", "ollama", "list"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+
+volumes:
+  postgres_data:
+  minio_data:
+  # ollama_data:

@@ -1,0 +1,460 @@
+"use client";
+
+import { useState, useEffect } from 'react';
+import { Loader2, Plus, Search, X } from 'lucide-react';
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
+// 1. Updated interface to match your database schema
+interface CategoryItem {
+  id: string;
+  category_name: string;
+}
+interface NoteItem {
+  id: string;
+  title: string;
+  content: string;
+  category: string;
+}
+
+// Interface for search results
+interface SearchResult {
+  id: string;
+  title: string;
+  content: string;
+  category: string;
+  similarity?: number;
+}
+
+export default function Home() {
+  const [open, setOpen] = useState(false);
+  const [title, setTitle] = useState("");
+  const [content, setContent] = useState("");
+  
+  // Storing the category UUID string here instead of the raw name
+  const [category, setCategory] = useState(""); 
+  const [customCategory, setCustomCategory] = useState("");
+  const [isCustom, setIsCustom] = useState(false);
+  
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [catLoading, setCatLoading] = useState(false);
+  const [initialFetchLoading, setInitialFetchLoading] = useState(true);
+
+  // Search states
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState("");
+  const [showResults, setShowResults] = useState(false);
+
+  // 2. State now holds full category objects (ID + Name)
+  const [categories, setCategories] = useState<CategoryItem[]>([]);
+
+  // Fetch all categories on component mount
+  useEffect(() => {
+    const fetchCategories = async () => {
+      try {
+        const res = await fetch("/api/categories");
+        if (!res.ok) throw new Error("Could not fetch categories");
+        
+        const jsonResponse = await res.json();
+        
+        // Save the direct object array containing ids and names
+        setCategories(jsonResponse.data || []);
+      } catch (err: any) {
+        console.error("Failed to load categories:", err);
+        setError("Failed to load categories list.");
+      } finally {
+        setInitialFetchLoading(false);
+      }
+    };
+
+    fetchCategories();
+  }, []);
+
+  // Handle search
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) return;
+
+    setSearchLoading(true);
+    setSearchError("");
+    setShowResults(true);
+
+    try {
+      const res = await fetch("/api/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: searchQuery })
+      });
+
+      if (!res.ok) {
+        throw new Error("Search failed. Please try again.");
+      }
+
+      const data = await res.json();
+      setSearchResults(data.notes || []);
+    } catch (err: any) {
+      setSearchError(err.message || "An error occurred during search");
+      setSearchResults([]);
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  // Handle search on Enter key
+  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      handleSearch();
+    }
+  };
+
+  // Clear search
+  const clearSearch = () => {
+    setSearchQuery("");
+    setSearchResults([]);
+    setShowResults(false);
+    setSearchError("");
+  };
+
+  const handleCategoryChange = (value: string) => {
+    if (value === "add_new") {
+      setIsCustom(true);
+      setCategory(""); 
+    } else {
+      setIsCustom(false);
+      setCategory(value); // This value will now be a UUID string
+    }
+  };
+
+  // Add new category to API and locally update the list
+  const handleCreateCategory = async () => {
+    const trimmedCat = customCategory.trim();
+    if (!trimmedCat) return;
+
+    setError("");
+    setCatLoading(true);
+
+    try {
+      const res = await fetch("/api/create-category", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: trimmedCat })
+      });
+
+      if (!res.ok) {
+        throw new Error("Failed to save new category.");
+      }
+
+      const jsonResponse = await res.json();
+      
+      // CRITICAL: Your backend endpoint must return the newly created category object
+      // Expected structure from backend: { data: { id: "new-uuid", category_name: "python" } }
+      const newCategory: CategoryItem = jsonResponse.data;
+
+      setCategories((prev) => [...prev, newCategory]);
+      setCategory(newCategory.id); // Auto-select using the new UUID
+      setIsCustom(false);
+      setCustomCategory("");
+    } catch (err: any) {
+      setError(err.message || "Error saving category");
+    } finally {
+      setCatLoading(false);
+    }
+  };
+
+  // Submit full note payload
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+
+    if (!category) {
+      setError("Please select a category");
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const createNoteRes = await fetch(
+        "/api/create-note",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          // CRITICAL: Sends the selected UUID string to match database requirements
+          body: JSON.stringify({ title, content, category }) 
+        }
+      );
+
+      if (!createNoteRes.ok) {
+        throw new Error("Failed to create the note. Please try again.");
+      }
+
+      setTitle("");
+      setContent("");
+      setCategory("");
+      setOpen(false); 
+    } catch (error: any) {
+      setError(error.message || "Something went wrong");
+      console.error(error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Get category name by id
+  const getCategoryName = (categoryId: string) => {
+    const category = categories.find(cat => cat.id === categoryId);
+    return category ? category.category_name : categoryId;
+  };
+
+  return (
+    <div className="min-h-screen bg-background p-4">
+      <div className="max-w-4xl mx-auto space-y-6">
+        {/* Search Bar */}
+        <div className="bg-card rounded-lg shadow-sm border p-4">
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                type="text"
+                placeholder="Search notes by content or topic..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={handleSearchKeyDown}
+                className="pl-10 pr-10"
+              />
+              {searchQuery && (
+                <button
+                  onClick={clearSearch}
+                  className="absolute right-3 top-1/2 transform -translate-y-1/2"
+                >
+                  <X className="h-4 w-4 text-muted-foreground hover:text-foreground" />
+                </button>
+              )}
+            </div>
+            <Button 
+              onClick={handleSearch}
+              disabled={searchLoading || !searchQuery.trim()}
+            >
+              {searchLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+              ) : (
+                <Search className="h-4 w-4 mr-2" />
+              )}
+              Search
+            </Button>
+          </div>
+
+          {/* Search Error */}
+          {searchError && (
+            <div className="mt-3 text-sm font-medium text-destructive bg-destructive/10 p-2 rounded">
+              {searchError}
+            </div>
+          )}
+
+          {/* Search Results */}
+          {showResults && (
+            <div className="mt-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold">
+                  Search Results {searchResults.length > 0 && `(${searchResults.length})`}
+                </h3>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={clearSearch}
+                >
+                  Clear
+                </Button>
+              </div>
+
+              {searchLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                  <span className="ml-2 text-sm text-muted-foreground">Searching...</span>
+                </div>
+              ) : searchResults.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <Search className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                  <p>No notes found matching "{searchQuery}"</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {searchResults.map((result) => (
+                  <div key={result.id} className="bg-muted/30 rounded-lg p-4 border">
+                      <div className="flex items-start justify-between mb-2">
+                        <h4 className="font-semibold text-sm">{result.title}</h4>
+                        <div className="flex items-center gap-2">
+                          {result.similarity && (
+                            <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full">
+                              {Math.round(result.similarity * 100)}% match
+                            </span>
+                          )}
+                          <span className="text-xs bg-primary/10 text-primary px-2 py-1 rounded-full">
+                            {getCategoryName(result.category)}
+                          </span>
+                        </div>
+                      </div>
+                      <p className="text-sm text-muted-foreground line-clamp-2">
+                        {result.content}
+                      </p>
+                    </div>
+                  ))}
+
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Create Note Button */}
+        <div className="flex justify-center">
+          <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>
+              <Button variant="default" size="lg">
+                <Plus className="h-5 w-5 mr-2" />
+                Create New Note
+              </Button>
+            </DialogTrigger>
+
+            <DialogContent className="sm:max-w-[425px]">
+              <DialogHeader>
+                <DialogTitle>Create Note</DialogTitle>
+              </DialogHeader>
+
+              <form onSubmit={handleSubmit} className="space-y-4 pt-2">
+                {error && (
+                  <div className="text-sm font-medium text-destructive bg-destructive/10 p-2 rounded">
+                    {error}
+                  </div>
+                )}
+
+                {/* Title Input */}
+                <div className="space-y-1">
+                  <label className="text-sm font-medium">Title</label>
+                  <Input
+                    type="text"
+                    placeholder="Note title..."
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    required
+                  />
+                </div>
+
+                {/* Category Select Element - Now tracks ID instead of Text */}
+                <div className="space-y-1">
+                  <label className="text-sm font-medium">Category</label>
+                  <Select 
+                    value={isCustom ? "add_new" : category} 
+                    onValueChange={handleCategoryChange}
+                    disabled={catLoading || initialFetchLoading}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder={initialFetchLoading ? "Loading categories..." : "Select a category"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {/* CRITICAL CHANGE: value is cat.id, while the display text is cat.category_name */}
+                      {categories.map((cat) => (
+                        <SelectItem key={cat.id} value={cat.id}>
+                          {cat.category_name}
+                        </SelectItem>
+                      ))}
+                      <SelectItem value="add_new" className="font-medium text-primary focus:text-primary-foreground">
+                        ➕ Add New Category...
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Custom Category input field */}
+                {isCustom && (
+                  <div className="space-y-1 bg-muted/40 p-3 rounded-lg border border-dashed animate-in fade-in-50 duration-200">
+                    <label className="text-sm font-medium text-muted-foreground block">New Category Name</label>
+                    <div className="flex gap-2">
+                      <Input
+                        type="text"
+                        placeholder="Enter new category..."
+                        value={customCategory}
+                        onChange={(e) => setCustomCategory(e.target.value)}
+                        disabled={catLoading}
+                      />
+                      <Button 
+                        type="button" 
+                        size="sm"
+                        onClick={handleCreateCategory}
+                        disabled={catLoading || !customCategory.trim()}
+                      >
+                        {catLoading ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Plus className="h-4 w-4" />
+                        )}
+                      </Button>
+                      <Button 
+                        type="button" 
+                        variant="ghost" 
+                        size="sm"
+                        onClick={() => {
+                          setIsCustom(false);
+                          setCustomCategory("");
+                        }}
+                        disabled={catLoading}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Content Input */}
+                <div className="space-y-1">
+                  <label className="text-sm font-medium">Content</label>
+                  <Textarea
+                    placeholder="Write your note content here..."
+                    value={content}
+                    onChange={(e) => setContent(e.target.value)}
+                    required
+                    className="min-h-[120px]"
+                  />
+                </div>
+
+                {/* Action buttons */}
+                <div className="flex justify-end gap-2 pt-2">
+                  <Button 
+                    type="button" 
+                    variant="outline" 
+                    onClick={() => setOpen(false)}
+                    disabled={loading || catLoading}
+                  >
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={loading || catLoading || isCustom || initialFetchLoading}>
+                    {loading ? "Saving..." : "Save Note"}
+                  </Button>
+                </div>
+              </form>
+            </DialogContent>
+          </Dialog>
+        </div>
+      </div>
+    </div>
+  );
+}
