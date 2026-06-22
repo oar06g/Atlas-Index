@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, startTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Search, FileUp, X, ArrowRight, Plus, Activity, Database, Cpu, CheckCircle, XCircle, RotateCw, AlertCircle } from 'lucide-react';
 
@@ -20,11 +20,6 @@ export default function AtlasIndex() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Fetch system status on component mount
-  useEffect(() => {
-    fetchSystemStatus();
-  }, []);
-
   const fetchSystemStatus = async () => {
     try {
       const response = await fetch('/api/status');
@@ -38,6 +33,13 @@ export default function AtlasIndex() {
       });
     }
   };
+
+  // Fetch system status on component mount
+  useEffect(() => {
+    startTransition(() => {
+      fetchSystemStatus();
+    });
+  }, []);
 
   const fetchSingleServiceStatus = async (service: 'database' | 'ollama') => {
     setLoadingStates(prev => ({ ...prev, [service]: true }));

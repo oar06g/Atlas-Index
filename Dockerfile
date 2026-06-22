@@ -1,29 +1,46 @@
 # syntax=docker/dockerfile:1
 
-FROM node:20-bullseye-slim AS builder
-WORKDIR /usr/src/app
+FROM node:20-alpine AS deps
+RUN apk add --no-cache libc6-compat
+WORKDIR /app
 
-# Install dependencies first for better caching
 COPY package.json package-lock.json* ./
-RUN npm install
 
-# Copy source and build
+RUN npm ci --include=dev
+
+# Rebuild the source code only when needed
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+
+ENV NEXT_TELEMETRY_DISABLED 1
+
 RUN npm run build
 
 # Production image
-FROM node:20-bullseye-slim AS runner
-WORKDIR /usr/src/app
+FROM node:20-alpine AS runner
+WORKDIR /app
 
-ENV NODE_ENV=production
+ENV NODE_ENV production
+ENV NEXT_TELEMETRY_DISABLED 1
 
-COPY --from=builder /usr/src/app/package.json ./
-COPY --from=builder /usr/src/app/node_modules ./node_modules
-COPY --from=builder /usr/src/app/.next ./.next
-COPY --from=builder /usr/src/app/public ./public
-COPY --from=builder /usr/src/app/next.config.ts ./next.config.ts
-COPY --from=builder /usr/src/app/tsconfig.json ./tsconfig.json
-COPY --from=builder /usr/src/app/next-env.d.ts ./next-env.d.ts
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
+
+COPY --from=builder /app/public ./public
+
+RUN mkdir .next
+RUN chown nextjs:nodejs .next
+
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+USER nextjs
 
 EXPOSE 3000
-CMD ["npm", "run", "start"]
+
+ENV PORT 3000
+ENV HOSTNAME "0.0.0.0"
+
+CMD ["node", "server.js"]

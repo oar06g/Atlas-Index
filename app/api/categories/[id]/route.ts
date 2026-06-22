@@ -1,5 +1,6 @@
 import {NextRequest, NextResponse} from 'next/server'
 import {db} from '@/app/lib/db'
+import {getErrorMessage} from '@/app/lib/errors'
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -17,6 +18,6 @@ export async function GET(request: NextRequest, context: RouteContext) {
     return NextResponse.json(data[0])
   } catch (error) {
     console.error("Database error:", error);
-    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+    return NextResponse.json({ error: getErrorMessage(error) }, { status: 500 });
   }
 }

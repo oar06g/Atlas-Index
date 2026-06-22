@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/app/lib/db';
+import { getErrorMessage } from '@/app/lib/errors';
 
 export async function GET() {
   try {
@@ -12,7 +13,6 @@ export async function GET() {
     return NextResponse.json({ data })
   } catch (error) {
     console.error(error)
-    // 2. Fixed status code syntax
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
+    return NextResponse.json({ error: getErrorMessage(error) }, { status: 500 })
   }
 }

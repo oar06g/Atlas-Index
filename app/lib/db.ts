@@ -1,9 +1,22 @@
 import { Pool } from "pg";
 
-export const db = new Pool({
-  user: process.env.USER_POSTGRES,
-  password: process.env.PASSWORD_POSTGRES,
-  host: process.env.HOST,
-  port: 5432,
-  database: process.env.DB_NAME,
-})
+const connectionString = process.env.DATABASE_URL;
+
+let pool: Pool | null = null;
+
+function getPool(): Pool {
+  if (!pool) {
+    if (!connectionString) {
+      throw new Error("DATABASE_URL environment variable is not set");
+    }
+    pool = new Pool({ connectionString });
+  }
+  return pool;
+}
+
+export const db = {
+  query: async (text: string, params?: unknown[]) => {
+    const p = getPool();
+    return p.query(text, params);
+  },
+};

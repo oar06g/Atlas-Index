@@ -138,7 +138,7 @@ export default function CreateEntryPage() {
   };
 
   // Create new entry API call with better error handling
-  const createNewEntry = async (entryData: any) => {
+  const createNewEntry = async (entryData: Record<string, unknown>) => {
     
     try {
       const response = await fetch('/api/entries/create-entry', {

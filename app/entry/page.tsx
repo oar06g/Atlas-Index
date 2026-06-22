@@ -1,7 +1,9 @@
 'use client'
 
-export default function () {
+function EntriesPage() {
   return (
     <div>Entries</div>
   )
 }
+
+export default EntriesPage

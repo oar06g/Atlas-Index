@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/app/lib/db";
 import { generateEmbedding } from "@/app/lib/ollama";
+import { getErrorMessage } from "@/app/lib/errors";
 
 export async function POST(req: Request) {
   try {
@@ -107,27 +108,30 @@ export async function POST(req: Request) {
       message: "Entry created successfully"
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Error creating entry:", error);
     
+    const message = getErrorMessage(error);
+    const pgError = error as { code?: string; message?: string };
+
     // Handle specific database errors
-    if (error.code === '23505') { // PostgreSQL unique violation
+    if (pgError.code === '23505') { // PostgreSQL unique violation
       return NextResponse.json(
         {
           success: false,
           error: "An entry with this slug already exists",
-          details: error.message
+          details: message
         },
         { status: 409 }
       );
     }
 
-    if (error.code === '23503') { // PostgreSQL foreign key violation
+    if (pgError.code === '23503') { // PostgreSQL foreign key violation
       return NextResponse.json(
         {
           success: false,
           error: "Invalid category ID. The specified category does not exist.",
-          details: error.message
+          details: message
         },
         { status: 400 }
       );
@@ -137,7 +141,7 @@ export async function POST(req: Request) {
       {
         success: false,
         error: "Internal server error",
-        details: error.message
+        details: message
       },
       { status: 500 }
     );

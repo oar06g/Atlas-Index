@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/app/lib/db";
 import { generateEmbedding } from "@/app/lib/ollama";
+import { getErrorMessage } from "@/app/lib/errors";
 
 export async function POST(req: NextRequest) {
   try {
@@ -69,7 +70,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         success: false,
-        error: "Failed to generate embedding",
+        error: getErrorMessage(error),
       },
       { status: 500 }
     );

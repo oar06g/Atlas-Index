@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/app/lib/db";
 import { generateEmbedding } from "@/app/lib/ollama";
+import { getErrorMessage } from "@/app/lib/errors";
 
 export async function POST(req: Request) {
   try {
@@ -110,8 +111,8 @@ export async function POST(req: Request) {
     return NextResponse.json(
       { 
         success: false, 
-        error: "Internal server error",
-        details: error instanceof Error ? error.message : "Unknown error"
+        error: "Search unavailable",
+        details: getErrorMessage(error)
       },
       { status: 500 }
     );

@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useState } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
-import { Search, ArrowLeft, Loader2, FileText, FolderOpen, Tag, Calendar, Type, AlertCircle } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { Search, ArrowLeft, Loader2, FolderOpen, Tag, Calendar, Type, AlertCircle } from "lucide-react";
 import Link from "next/link";
 
 interface SearchResult {
@@ -23,7 +23,6 @@ interface SearchResult {
 
 export default function SearchClient() {
   const searchParams = useSearchParams();
-  const router = useRouter();
   const query = searchParams.get('q');
   
   const [results, setResults] = useState<SearchResult[]>([]);
@@ -137,7 +136,7 @@ export default function SearchClient() {
           
           <div className="flex flex-col items-center justify-center py-20">
             <Loader2 className="w-12 h-12 text-neutral-400 dark:text-neutral-600 animate-spin mb-4" />
-            <p className="text-neutral-600 dark:text-neutral-400">Searching for "{query}"...</p>
+            <p className="text-neutral-600 dark:text-neutral-400">Searching for &ldquo;{query}&rdquo;...</p>
           </div>
         </div>
       </div>
@@ -173,7 +172,7 @@ export default function SearchClient() {
             Search Results
           </h1>
           <p className="text-neutral-500 dark:text-neutral-400">
-            Found {totalResults} result{totalResults === 1 ? '' : 's'} for "{query}"
+            Found {totalResults} result{totalResults === 1 ? '' : 's'} for &ldquo;{query}&rdquo;
           </p>
         </div>
 
@@ -202,7 +201,7 @@ export default function SearchClient() {
               No results found
             </h3>
             <p className="text-neutral-500 dark:text-neutral-400 max-w-md mx-auto">
-              We couldn't find any matches for "{query}". Try using different keywords or check your spelling.
+              We couldn&rsquo;t find any matches for &ldquo;{query}&rdquo;. Try using different keywords or check your spelling.
             </p>
           </div>
         )}

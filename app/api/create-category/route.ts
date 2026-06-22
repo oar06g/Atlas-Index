@@ -1,6 +1,7 @@
 // app/api/create-category/route.ts
 import { NextResponse } from "next/server";
 import { db } from "@/app/lib/db";
+import { getErrorMessage } from "@/app/lib/errors";
 
 export async function POST(req: Request) {
   try {
@@ -50,14 +51,14 @@ export async function POST(req: Request) {
       message: "Category created successfully"
     }, { status: 201 });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Error creating category:", error);
     
     return NextResponse.json(
       {
         success: false,
         error: "Internal server error",
-        details: error.message
+        details: getErrorMessage(error)
       },
       { status: 500 }
     );
