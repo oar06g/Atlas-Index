@@ -17,6 +17,9 @@
 /.next/
 /out/
 
+# local runtime data (settings file for `npm run dev`)
+/data/
+
 # production
 /build
 
