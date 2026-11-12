@@ -21,28 +21,20 @@ services:
     image: ollama/ollama:latest
     container_name: ollama-service
     restart: always
+    environment:
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-nomic-embed-text}
     ports:
       - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
-
-  pgadmin:
-    image: dpage/pgadmin4:latest
-    container_name: pgadmin-dashboard
-    restart: always
-    environment:
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
-      PGADMIN_CONFIG_SERVER_MODE: "False"
-    ports:
-      - "5050:80"
-    volumes:
-      - pgadmin_data:/var/lib/pgadmin
-    depends_on:
-      db:
-        condition: service_healthy
+      - ./scripts/ollama-entrypoint.sh:/usr/local/bin/ollama-entrypoint.sh:ro
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        tr -d '\r' < /usr/local/bin/ollama-entrypoint.sh > /tmp/ollama-entrypoint.sh
+        exec /bin/sh /tmp/ollama-entrypoint.sh
 
 volumes:
   postgres_data:
   ollama_data:
-  pgadmin_data:

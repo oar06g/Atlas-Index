@@ -1,0 +1,9 @@
+* text=auto
+
+# Keep files consumed by Linux containers on LF, including on Windows checkouts.
+*.sh text eol=lf
+Dockerfile* text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.sql text eol=lf
+/.gitattributes text eol=lf

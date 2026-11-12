@@ -19,6 +19,7 @@
       }
     ],
     "paths": {
+      "@atlas/core": ["./packages/core/index.ts"],
       "@/*": ["./src/*"]
     }
   },
