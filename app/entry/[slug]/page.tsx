@@ -1,7 +1,7 @@
 'use client'
 
 import { useParams } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { ArrowLeft, Calendar, FolderOpen, Tags, Type, Loader2 } from 'lucide-react'
 import Link from 'next/link'
 import ReactMarkdown from 'react-markdown'
@@ -28,7 +28,26 @@ interface KnowledgeEntry {
   updated_at: string
 }
 
+function EntryLoading() {
+  return (
+    <div className="min-h-screen bg-[#fafafa] dark:bg-[#121212] flex items-center justify-center">
+      <div className="flex flex-col items-center gap-4">
+        <Loader2 className="w-8 h-8 text-neutral-600 dark:text-neutral-400 animate-spin" />
+        <p className="text-neutral-600 dark:text-neutral-400">Loading entry...</p>
+      </div>
+    </div>
+  )
+}
+
 export default function EntryViewer() {
+  return (
+    <Suspense fallback={<EntryLoading />}>
+      <EntryViewerContent />
+    </Suspense>
+  )
+}
+
+function EntryViewerContent() {
   const params = useParams()
   const [data, setData] = useState<KnowledgeEntry | null>(null)
   const [loading, setLoading] = useState(true)
@@ -91,14 +110,7 @@ export default function EntryViewer() {
   }
 
   if (loading) {
-    return (
-      <div className="min-h-screen bg-[#fafafa] dark:bg-[#121212] flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <Loader2 className="w-8 h-8 text-neutral-600 dark:text-neutral-400 animate-spin" />
-          <p className="text-neutral-600 dark:text-neutral-400">Loading entry...</p>
-        </div>
-      </div>
-    )
+    return <EntryLoading />
   }
 
   if (error || !data) {
