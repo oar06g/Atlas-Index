@@ -2,13 +2,26 @@
 
 import React, { useState, useRef, useEffect, startTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search, FileUp, X, ArrowRight, Plus, Activity, Database, Cpu, CheckCircle, XCircle, RotateCw, AlertCircle, Settings } from 'lucide-react';
+import Link from 'next/link';
+import { Search, FileUp, X, ArrowRight, Plus, Activity, Database, Cpu, CheckCircle, XCircle, RotateCw, AlertCircle, Settings, Loader2 } from 'lucide-react';
 
 interface ServiceStatusState {
   status: string;
   code: number;
   error?: string;
-  mode?: string;
+  provider?: string;
+  model_id?: string;
+  dimensions?: number;
+}
+
+interface IndexingEntry {
+  id: string;
+  title: string;
+  slug: string;
+  status: string;
+  error_message: string | null;
+  chunks_total: number;
+  chunks_done: number;
 }
 
 export default function AtlasIndex() {
@@ -17,16 +30,17 @@ export default function AtlasIndex() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [systemStatus, setSystemStatus] = useState<{
     database: ServiceStatusState;
-    ollama: ServiceStatusState;
+    embedding: ServiceStatusState;
   }>({
     database: { status: 'loading', code: 0 },
-    ollama: { status: 'loading', code: 0 }
+    embedding: { status: 'loading', code: 0 }
   });
   const [loadingStates, setLoadingStates] = useState({
     database: false,
-    ollama: false
+    embedding: false
   });
   const [isStatusDropdownOpen, setIsStatusDropdownOpen] = useState(false);
+  const [indexingEntries, setIndexingEntries] = useState<IndexingEntry[]>([]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -39,7 +53,7 @@ export default function AtlasIndex() {
       console.error('Failed to fetch system status:', error);
       setSystemStatus({
         database: { status: 'error', code: 500 },
-        ollama: { status: 'error', code: 500 }
+        embedding: { status: 'error', code: 500 }
       });
     }
   };
@@ -51,7 +65,7 @@ export default function AtlasIndex() {
     });
   }, []);
 
-  const fetchSingleServiceStatus = async (service: 'database' | 'ollama') => {
+  const fetchSingleServiceStatus = async (service: 'database' | 'embedding') => {
     setLoadingStates(prev => ({ ...prev, [service]: true }));
     
     try {
@@ -71,6 +85,40 @@ export default function AtlasIndex() {
       setLoadingStates(prev => ({ ...prev, [service]: false }));
     }
   };
+
+  const fetchIndexing = async () => {
+    try {
+      const response = await fetch('/api/entries?status=pending,processing,failed&limit=10');
+      const data = await response.json();
+      if (data.success) {
+        setIndexingEntries(data.entries ?? []);
+      }
+    } catch (error) {
+      console.error('Failed to fetch indexing queue:', error);
+    }
+  };
+
+  const retryEntry = async (entryId: string) => {
+    try {
+      await fetch('/api/entries/generate-embedding', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entryId }),
+      });
+      await fetchIndexing();
+    } catch (error) {
+      console.error('Failed to retry entry:', error);
+    }
+  };
+
+  // Poll the indexing queue so progress is visible while entries are processed.
+  useEffect(() => {
+    startTransition(() => {
+      fetchIndexing();
+    });
+    const timer = setInterval(fetchIndexing, 3000);
+    return () => clearInterval(timer);
+  }, []);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -131,7 +179,7 @@ export default function AtlasIndex() {
   };
 
   const databaseStatus = getStatusDisplay(systemStatus.database);
-  const ollamaStatus = getStatusDisplay(systemStatus.ollama);
+  const embeddingStatus = getStatusDisplay(systemStatus.embedding);
 
   return (
     <div className="relative flex flex-col items-center justify-center min-h-screen bg-[#fafafa] dark:bg-[#121212] p-4 overflow-x-hidden">
@@ -157,9 +205,9 @@ export default function AtlasIndex() {
           >
             <Activity className="w-4 h-4" />
             <span>System Status</span>
-            {(systemStatus.database.status === 'connected' && systemStatus.ollama.status === 'connected') ? (
+            {(systemStatus.database.status === 'connected' && systemStatus.embedding.status === 'connected') ? (
               <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-            ) : (systemStatus.database.status === 'error' || systemStatus.ollama.status === 'error') ? (
+            ) : (systemStatus.database.status === 'error' || systemStatus.embedding.status === 'error') ? (
               <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
             ) : (
               <div className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse" />
@@ -194,7 +242,7 @@ export default function AtlasIndex() {
                       <div>
                         <h4 className="font-medium text-neutral-900 dark:text-neutral-100">Database</h4>
                         <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                          {systemStatus.database.mode === 'external' ? 'External PostgreSQL' : 'Internal PostgreSQL'}
+                          PostgreSQL · pgvector
                         </p>
                       </div>
                     </div>
@@ -221,36 +269,40 @@ export default function AtlasIndex() {
                   </div>
                 </div>
 
-                {/* Ollama Service */}
-                <div className={`p-4 ${ollamaStatus.bgColor}`}>
+                {/* Embedding Service */}
+                <div className={`p-4 ${embeddingStatus.bgColor}`}>
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-3">
                       <div className="p-2 bg-white dark:bg-neutral-800 rounded-lg shadow-sm">
                         <Cpu className="w-5 h-5 text-neutral-700 dark:text-neutral-300" />
                       </div>
                       <div>
-                        <h4 className="font-medium text-neutral-900 dark:text-neutral-100">Ollama</h4>
-                        <p className="text-xs text-neutral-500 dark:text-neutral-400">LLM Service</p>
+                        <h4 className="font-medium text-neutral-900 dark:text-neutral-100">Embedding Model</h4>
+                        <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                          {systemStatus.embedding.model_id
+                            ? `${systemStatus.embedding.provider ?? 'ollama'} · ${systemStatus.embedding.model_id}`
+                            : 'Embedding service'}
+                        </p>
                       </div>
                     </div>
                     <button
-                      onClick={() => fetchSingleServiceStatus('ollama')}
-                      disabled={loadingStates.ollama}
+                      onClick={() => fetchSingleServiceStatus('embedding')}
+                      disabled={loadingStates.embedding}
                       className="p-1.5 hover:bg-neutral-200 dark:hover:bg-neutral-700 rounded-lg transition-colors disabled:opacity-50"
                     >
-                      <RotateCw className={`w-4 h-4 text-neutral-500 ${loadingStates.ollama ? 'animate-spin' : ''}`} />
+                      <RotateCw className={`w-4 h-4 text-neutral-500 ${loadingStates.embedding ? 'animate-spin' : ''}`} />
                     </button>
                   </div>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      {ollamaStatus.icon}
-                      <span className={`text-sm font-medium ${ollamaStatus.color}`}>
-                        {ollamaStatus.text}
+                      {embeddingStatus.icon}
+                      <span className={`text-sm font-medium ${embeddingStatus.color}`}>
+                        {embeddingStatus.text}
                       </span>
                     </div>
-                    {systemStatus.ollama.code > 0 && (
+                    {systemStatus.embedding.code > 0 && (
                       <span className="text-xs font-mono text-neutral-500 dark:text-neutral-400">
-                        Code: {systemStatus.ollama.code}
+                        Code: {systemStatus.embedding.code}
                       </span>
                     )}
                   </div>
@@ -260,9 +312,9 @@ export default function AtlasIndex() {
                 <div className="p-3 bg-neutral-50 dark:bg-neutral-900 border-t border-neutral-100 dark:border-neutral-800">
                   <div className="flex items-center justify-between text-xs">
                     <span className="text-neutral-600 dark:text-neutral-400">Overall System</span>
-                    {(systemStatus.database.status === 'connected' && systemStatus.ollama.status === 'connected') ? (
+                    {(systemStatus.database.status === 'connected' && systemStatus.embedding.status === 'connected') ? (
                       <span className="text-green-600 dark:text-green-400 font-medium">All Systems Operational</span>
-                    ) : (systemStatus.database.status === 'error' || systemStatus.ollama.status === 'error') ? (
+                    ) : (systemStatus.database.status === 'error' || systemStatus.embedding.status === 'error') ? (
                       <span className="text-red-600 dark:text-red-400 font-medium">Some Services Failed</span>
                     ) : (
                       <span className="text-yellow-600 dark:text-yellow-400 font-medium">Checking Services...</span>
@@ -350,6 +402,114 @@ export default function AtlasIndex() {
             <ArrowRight className="w-4 h-4" />
           </button>
         </form>
+
+        {indexingEntries.length > 0 && (
+          <div className="w-full mt-4 bg-white dark:bg-[#1e1e1e] border border-neutral-200 dark:border-neutral-800 rounded-2xl shadow-sm overflow-hidden text-left">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-100 dark:border-neutral-800">
+              <div className="flex items-center gap-2">
+                <Loader2
+                  className={`w-4 h-4 text-neutral-500 ${
+                    indexingEntries.some(
+                      (entry) => entry.status === 'pending' || entry.status === 'processing'
+                    )
+                      ? 'animate-spin'
+                      : ''
+                  }`}
+                />
+                <span className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                  Indexing queue
+                </span>
+              </div>
+              <span className="text-xs text-neutral-500 dark:text-neutral-400">
+                {indexingEntries.length}{' '}
+                {indexingEntries.length === 1 ? 'entry' : 'entries'}
+              </span>
+            </div>
+
+            <ul className="divide-y divide-neutral-100 dark:divide-neutral-800">
+              {indexingEntries.map((entry) => {
+                const total = Math.max(entry.chunks_total ?? 0, 0);
+                const done = Math.min(entry.chunks_done ?? 0, total);
+                const percent =
+                  total > 0
+                    ? Math.round((done / total) * 100)
+                    : entry.status === 'embedded'
+                      ? 100
+                      : 0;
+                const label =
+                  entry.status === 'failed'
+                    ? 'Failed'
+                    : entry.status === 'processing'
+                      ? `Indexing ${percent}%`
+                      : 'Queued';
+                const badgeClass =
+                  entry.status === 'failed'
+                    ? 'bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400'
+                    : entry.status === 'processing'
+                      ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400'
+                      : 'bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300';
+
+                return (
+                  <li key={entry.id} className="px-4 py-3">
+                    <div className="flex items-center justify-between gap-3 mb-2">
+                      <Link
+                        href={`/entry/${entry.slug}`}
+                        className="text-sm font-medium text-neutral-900 dark:text-neutral-100 truncate hover:underline"
+                      >
+                        {entry.title}
+                      </Link>
+                      <span
+                        className={`text-[11px] font-medium px-2 py-0.5 rounded-full whitespace-nowrap ${badgeClass}`}
+                      >
+                        {label}
+                      </span>
+                    </div>
+
+                    <div className="h-1.5 bg-neutral-100 dark:bg-neutral-800 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all duration-500 ${
+                          entry.status === 'failed'
+                            ? 'bg-red-400'
+                            : 'bg-neutral-900 dark:bg-neutral-100'
+                        }`}
+                        style={{
+                          width: `${entry.status === 'failed' ? 100 : percent}%`,
+                        }}
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between mt-1.5 gap-3">
+                      <span
+                        className={`text-xs line-clamp-2 ${
+                          entry.status === 'failed'
+                            ? 'text-red-500 dark:text-red-400'
+                            : 'text-neutral-500 dark:text-neutral-400'
+                        }`}
+                      >
+                        {entry.status === 'failed'
+                          ? entry.error_message ?? 'Embedding failed'
+                          : total > 0
+                            ? `${done} / ${total} chunks`
+                            : 'Preparing...'}
+                      </span>
+
+                      {entry.status === 'failed' && (
+                        <button
+                          type="button"
+                          onClick={() => retryEntry(entry.id)}
+                          className="inline-flex items-center gap-1 text-xs font-medium text-neutral-700 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-neutral-100 whitespace-nowrap"
+                        >
+                          <RotateCw className="w-3 h-3" />
+                          Retry
+                        </button>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
       </div>
     </div>
   );

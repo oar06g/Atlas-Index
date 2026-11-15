@@ -1,0 +1,109 @@
+name: atlas-index
+
+services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL 17 + pgvector — stores entries, categories and embeddings.
+  # ---------------------------------------------------------------------------
+  db:
+    image: pgvector/pgvector:pg17
+    container_name: pgvector-db
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-atlas}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-atlas}
+      POSTGRES_DB: ${POSTGRES_DB:-atlasdb}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # The schema is idempotent and is applied automatically the first time
+      # the data volume is initialised.
+      - ./queries/init.sql:/docker-entrypoint-initdb.d/10-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Ollama — local embedding service. Pulls the configured model on startup.
+  # ---------------------------------------------------------------------------
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama-service
+    restart: always
+    environment:
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-nomic-embed-text}
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-24h}
+      OLLAMA_HOST: 0.0.0.0:11434
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+      - ./scripts/ollama-entrypoint.sh:/usr/local/bin/ollama-entrypoint.sh:ro
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        tr -d '\r' < /usr/local/bin/ollama-entrypoint.sh > /tmp/ollama-entrypoint.sh
+        exec /bin/sh /tmp/ollama-entrypoint.sh
+    healthcheck:
+      # Healthy only once the embedding model has actually been pulled.
+      test: ["CMD-SHELL", "ollama list | grep -q \"$${OLLAMA_MODEL}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Atlas Index — Next.js web UI + API.
+  #
+  # Comment this service out if you prefer to run the app locally with
+  # `npm run dev` while keeping only `db` and `ollama` in Docker.
+  # ---------------------------------------------------------------------------
+  app:
+    # Set ATLAS_IMAGE to run a published image instead of building locally,
+    # e.g. ATLAS_IMAGE=ghcr.io/oar06g/atlas-index:latest (with --no-build).
+    image: ${ATLAS_IMAGE:-atlas-index:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: atlas-index
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+      # The database is configured through env only (see app/lib/db.ts).
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-atlas}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-atlas}
+      POSTGRES_DB: ${POSTGRES_DB:-atlasdb}
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-nomic-embed-text}
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-24h}
+      EMBED_BATCH_SIZE: ${EMBED_BATCH_SIZE:-4}
+      EMBED_TIMEOUT_MS: ${EMBED_TIMEOUT_MS:-120000}
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  postgres_data:
+  ollama_data:

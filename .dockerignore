@@ -14,7 +14,8 @@ yarn-error.log*
 coverage
 dist
 /.vscode
-docker-compose.yml
+compose.yml
+scripts
 AGENTS.md
 CLAUDE.md
 note.txt

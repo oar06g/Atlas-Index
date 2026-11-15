@@ -1,111 +1,177 @@
+<div align="center">
+
 # Atlas Index
 
-A local knowledge assistant. Store knowledge entries (Markdown documents,
-notes, articles), index them with vector embeddings, and search them with
-semantic similarity — all running in **one self-contained container**.
+**A private, offline-first knowledge base with semantic search.**
 
-## Architecture (standalone)
+Store Markdown notes and documents, index them with vector embeddings, and
+retrieve them by meaning. Runs entirely on your own machine via Docker Compose.
 
-Everything runs inside a single Docker container — there are no external
-services to install or manage:
+[![CI](https://github.com/oar06g/Atlas-Index/actions/workflows/ci.yml/badge.svg)](https://github.com/oar06g/Atlas-Index/actions/workflows/ci.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Next.js 16](https://img.shields.io/badge/Next.js-16-black?logo=nextdotjs)](https://nextjs.org)
+[![PostgreSQL 17](https://img.shields.io/badge/PostgreSQL-17-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org)
+[![GHCR](https://img.shields.io/badge/GHCR-ghcr.io%2Foar06g%2Fatlas--index-2496ED?logo=github)](https://github.com/oar06g/Atlas-Index/pkgs/container/atlas-index)
 
-| Component | What it does |
-| --- | --- |
-| **Next.js app** | Web UI + API (`/app`, port `3000`) |
-| **PostgreSQL 16 + pgvector** | Internal database; stores entries, categories and the vector embeddings (port `5432`, internal only) |
-| **Ollama** | Local embedding service with the `nomic-embed-text` model pre-installed (port `11434`, internal only) |
+</div>
 
+## Overview
+
+Atlas Index combines a Next.js web interface, PostgreSQL with pgvector, and a
+local embedding model served by Ollama. Entries are chunked and embedded in the
+background; searches are answered by cosine similarity over those embeddings,
+with PostgreSQL full-text search as a complementary and fallback path. No cloud
+account is required, and your content never leaves the host.
+
+## Features
+
+- **Semantic search** over chunked entry content, merged with PostgreSQL
+  full-text ranking.
+- **Markdown authoring** with live preview, syntax highlighting, categories and
+  tags.
+- **Background indexing queue** with per-entry progress, failure details and
+  one-click retry; interrupted jobs resume after a restart.
+- **Provider-agnostic embeddings** — Ollama, OpenAI, or any OpenAI-compatible
+  endpoint, configurable at runtime from the Settings page.
+- **Single-command deployment** with Docker Compose and a published container
+  image on GHCR.
+- **Service health reporting** through `/api/status` and the in-app status panel.
+
+## Architecture
+
+| Service | Image | Responsibility |
+| --- | --- | --- |
+| **app** | `ghcr.io/oar06g/atlas-index` | Next.js 16 web UI and API (`:3000`) |
+| **db** | `pgvector/pgvector:pg17` | PostgreSQL 17 + pgvector: entries, chunks, embeddings, settings (`:5432`) |
+| **ollama** | `ollama/ollama` | Local embedding model server (`:11434`) |
+
+```mermaid
+flowchart LR
+    Browser --> App["Next.js app"]
+    App -->|SQL and vector search| DB[("PostgreSQL + pgvector")]
+    App -->|embeddings| Ollama["Ollama"]
+    App -.->|optional| Cloud["OpenAI-compatible API"]
 ```
-┌───────────────────────────────────────────────┐
-│              atlas-index container            │
-│                                               │
-│   ┌─────────────┐   ┌─────────────────────┐  │
-│   │  Next.js    │   │  PostgreSQL +       │  │
-│   │  app :3000  │──▶│  pgvector :5432     │  │
-│   └──────┬──────┘   │  (internal DB +     │  │
-│          │          │   vector embeddings) │  │
-│          │          └─────────────────────┘  │
-│          │          ┌─────────────────────┐  │
-│          └─────────▶│  Ollama :11434      │  │
-│                     │  nomic-embed-text   │  │
-│                     └─────────────────────┘  │
-└───────────────────────────────────────────────┘
-```
 
-### Quick start
+An entry is saved immediately with `status = pending`, split into 1,200-character
+chunks with 200-character overlap, embedded in small batches, and stored with the
+`model_id` that produced each vector. Search only considers chunks from the
+model currently configured, so entries must be re-indexed after a model change.
+The schema is defined in [`queries/init.sql`](queries/init.sql).
+
+## Quick start
+
+Requires Docker with Compose v2 and roughly 2 GB of free disk space.
 
 ```bash
+git clone https://github.com/oar06g/Atlas-Index.git
+cd Atlas-Index
+cp .env.example .env        # optional; defaults are built in
 docker compose up --build
 ```
 
-Then open http://localhost:3000.
+Open <http://localhost:3000>. The first launch pulls the `nomic-embed-text`
+model (~274 MB), so it can take a few minutes.
 
-The first build takes a while because the `nomic-embed-text` embedding
-model (~274 MB) is downloaded and baked into the image.
+### Prebuilt image
 
-### Persistence
+Images are published to the GitHub Container Registry:
 
-Data survives restarts via three Docker volumes:
+```bash
+docker pull ghcr.io/oar06g/atlas-index:latest
+```
 
-| Volume | Contents |
+| Tag | Source |
 | --- | --- |
-| `postgres_data` | Internal database (entries, categories, embeddings) |
-| `ollama_data` | Ollama models |
-| `app_data` | Application settings (e.g. external database config) |
+| `latest` | Latest commit on the default branch |
+| `main` | Current default branch |
+| `vX.Y.Z`, `X.Y` | Git version tags |
+| `sha-<commit>` | Every published commit |
 
-## External PostgreSQL (optional)
+> Package visibility is set once by the maintainer under the repository's package
+> settings. It must be **Public** for anonymous `docker pull` to work.
 
-By default the app uses the database inside the container. To use an
-existing PostgreSQL server instead:
+The application container still requires the `db` and `ollama` services provided
+by [`compose.yml`](compose.yml). To use a published image instead of building
+from source, set the tag in `.env` and start the stack without a local build:
 
-1. Open **Settings** (top-right of the home page) — or go to `/settings`.
-2. Choose **External PostgreSQL**.
-3. Fill in the host, port, username, password and database name (or
-   paste a full `postgresql://` connection string — extra options such
-   as `?sslmode=require` are supported).
-4. Use **Test connection** to verify it, then **Save settings**.
+```bash
+# .env
+ATLAS_IMAGE=ghcr.io/oar06g/atlas-index:latest
 
-The external server must have the **pgvector** extension installed, since
-entries are stored as `vector(768)` embeddings. The schema in `init.sql`
-(applied automatically on every startup) is idempotent, but it is only
-auto-applied to the **internal** database — apply it manually on an
-external server if needed.
+# start the stack
+docker compose up -d --no-build
+```
 
-Changes take effect immediately; no restart is required.
+## Configuration
 
-## Environment variables
+All environment variables are optional; see [`.env.example`](.env.example).
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `POSTGRES_USER` | `atlas` | Internal PostgreSQL user |
-| `POSTGRES_PASSWORD` | `atlas` | Internal PostgreSQL password |
-| `POSTGRES_DB` | `atlasdb` | Internal PostgreSQL database |
-| `DATABASE_URL` | derived from the above | Overrides the internal connection string |
-| `OLLAMA_HOST` | `http://localhost:11434` | Ollama API URL used by the app |
-| `OLLAMA_KEEP_ALIVE` | `24h` | How long Ollama keeps the model loaded |
-| `ATLAS_DATA_DIR` | `/app/data` | Where settings are persisted |
+| `DATABASE_URL` | derived from `POSTGRES_*` | Full connection string; overrides individual values |
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` | `atlas` | Database credentials |
+| `POSTGRES_DB` | `atlasdb` | Database name |
+| `POSTGRES_HOST` / `POSTGRES_PORT` | `db` / `5432` | Database address |
+| `OLLAMA_MODEL` | `nomic-embed-text` | Model pulled by the `ollama` service |
+| `OLLAMA_KEEP_ALIVE` | `24h` | How long the model stays loaded |
+| `EMBED_BATCH_SIZE` | `4` | Chunks per embedding request |
+| `EMBED_TIMEOUT_MS` | `120000` | Request timeout; failed batches are retried and split |
+| `NEXT_PUBLIC_APP_URL` | `http://localhost:3000` | Public application URL |
 
-The container publishes only port `3000` for the web app. PostgreSQL
-(`5432`) and Ollama (`11434`) are internal and are intentionally **not**
-published, so they can never conflict with services already running on
-the host (for example, a system-wide Ollama on `11434`).
+The active embedding provider, model, dimensions and API key are stored in the
+`settings` table and edited at `/settings`. Dimensions must match the model
+output (768 for `nomic-embed-text`, 384 for `all-minilm`); use **Test model** to
+validate a configuration before saving.
+
+Atlas Index has no built-in authentication. Run it on a trusted network and place
+it behind an authenticated reverse proxy if remote access is required.
 
 ## Development
 
 ```bash
 npm install
+docker compose up -d db ollama
 npm run dev
 ```
 
-`npm run dev` expects a PostgreSQL server with the pgvector extension at
-`localhost:5432` (or set `DATABASE_URL`), and an Ollama instance with
-`nomic-embed-text` available at `localhost:11434`.
+Outside Compose the app connects to `localhost:5432` and `localhost:11434`.
+Apply the schema once on a fresh database:
 
-## Notes
+```bash
+docker compose exec -T db psql -U atlas -d atlasdb \
+  -f /docker-entrypoint-initdb.d/10-init.sql
+```
 
-- The embedding model is fixed at build time (`nomic-embed-text`,
-  768 dimensions). Changing the model produces incompatible embeddings —
-  re-create your entries (and the database) if you swap the model.
-- Search combines vector similarity with PostgreSQL full-text search;
-  it automatically falls back to full-text search if embedding
-  generation fails.
+| Command | Description |
+| --- | --- |
+| `npm run dev` | Development server |
+| `npm run build` | Production build |
+| `npm run start` | Serve the production build |
+| `npm run lint` | ESLint |
+
+## API
+
+| Method | Endpoint | Description |
+| --- | --- | --- |
+| `GET` | `/api/status` | Database and embedding health |
+| `GET` | `/api/entries?status=&limit=` | List entries by status |
+| `GET` | `/api/entries/{slug}` | Fetch an entry and its indexing progress |
+| `POST` | `/api/entries/create-entry` | Create an entry and queue it for indexing |
+| `POST` | `/api/entries/generate-embedding` | Re-index an entry (`entryId`) |
+| `POST` | `/api/search` | Semantic and full-text search (`query`) |
+| `GET` | `/api/categories` | List categories |
+| `POST` | `/api/create-category` | Create a category |
+| `GET` | `/api/settings` | Read embedding settings |
+| `POST` | `/api/settings` | Update embedding settings |
+| `POST` | `/api/settings/test` | Test an embedding configuration |
+
+## Contributing
+
+Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before starting. Open an issue, wait
+for approval, branch as `issuenumber-typeofissue-branchname`, and reference the
+issue in your pull request. Ensure `npm run lint` and `npm run build` pass.
+
+## License
+
+Released under the [Apache License 2.0](LICENSE).

@@ -1,163 +1,174 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
+  AlertCircle,
   ArrowLeft,
   CheckCircle,
-  XCircle,
-  AlertCircle,
-  Loader2,
-  Database,
-  Server,
-  Save,
+  Cpu,
   FlaskConical,
-  KeyRound,
   Globe,
   Hash,
-  User,
-  SquareTerminal,
+  KeyRound,
+  Loader2,
+  RefreshCw,
+  Save,
+  XCircle,
 } from "lucide-react";
 
-interface DatabaseSettings {
-  mode: "internal" | "external";
-  url?: string;
+type EmbeddingProvider = "ollama" | "openai" | "custom";
+
+interface ModelSettings {
+  provider: EmbeddingProvider;
+  model_id: string;
+  dimensions: number;
+  base_url: string | null;
+  api_key: string | null;
+  updated_at?: string;
 }
 
-interface Settings {
-  database: DatabaseSettings;
-  updatedAt?: string;
+interface TestResult {
+  ok: boolean;
+  message: string;
 }
 
-interface DbFields {
-  host: string;
-  port: string;
-  user: string;
-  password: string;
-  dbname: string;
-}
+const PROVIDERS: Array<{
+  value: EmbeddingProvider;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "ollama",
+    label: "Ollama",
+    description: "Local embedding model served by the ollama container.",
+  },
+  {
+    value: "openai",
+    label: "OpenAI",
+    description: "Official OpenAI embeddings API.",
+  },
+  {
+    value: "custom",
+    label: "Custom",
+    description: "Any OpenAI-compatible /embeddings endpoint.",
+  },
+];
 
-const DEFAULT_FIELDS: DbFields = {
-  host: "localhost",
-  port: "5432",
-  user: "postgres",
-  password: "",
-  dbname: "postgres",
+const DEFAULT_BASE_URLS: Record<EmbeddingProvider, string> = {
+  ollama: "",
+  openai: "https://api.openai.com/v1",
+  custom: "",
 };
 
 export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
-  const [settings, setSettings] = useState<Settings | null>(null);
-  const [mode, setMode] = useState<"internal" | "external">("internal");
-  const [useRawUrl, setUseRawUrl] = useState(false);
-  const [rawUrl, setRawUrl] = useState("");
-  const [fields, setFields] = useState<DbFields>(DEFAULT_FIELDS);
-  const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [testResult, setTestResult] = useState<{
-    ok: boolean;
-    message: string;
-  } | null>(null);
-  const [saveResult, setSaveResult] = useState<{
-    ok: boolean;
-    message: string;
-  } | null>(null);
+  const [testing, setTesting] = useState(false);
+
+  const [provider, setProvider] = useState<EmbeddingProvider>("ollama");
+  const [modelId, setModelId] = useState("");
+  const [dimensions, setDimensions] = useState("768");
+  const [baseUrl, setBaseUrl] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [staleEntries, setStaleEntries] = useState(0);
+
+  const [testResult, setTestResult] = useState<TestResult | null>(null);
+  const [saveResult, setSaveResult] = useState<TestResult | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const applySettings = (settings: ModelSettings) => {
+    setProvider(settings.provider);
+    setModelId(settings.model_id);
+    setDimensions(String(settings.dimensions));
+    setBaseUrl(settings.base_url ?? "");
+    setApiKey(settings.api_key ?? "");
+  };
 
   useEffect(() => {
     fetch("/api/settings")
       .then((res) => res.json())
       .then((data) => {
         if (data.success) {
-          setSettings(data.settings);
-          setMode(data.settings.database.mode);
-          const url = data.settings.database.url;
-          if (url) {
-            setRawUrl(url);
-            try {
-              const u = new URL(url);
-              setFields({
-                host: u.hostname,
-                port: u.port || "5432",
-                user: u.username ? decodeURIComponent(u.username) : "postgres",
-                password: u.password ? decodeURIComponent(u.password) : "",
-                dbname: u.pathname.replace(/^\//, "") || "postgres",
-              });
-            } catch {
-              // keep defaults if the URL cannot be parsed
-            }
-          }
+          applySettings(data.settings);
+          setStaleEntries(data.stale_entries ?? 0);
         } else {
-          setSaveResult({ ok: false, message: data.error || "Failed to load settings" });
+          setLoadError(data.error || "Failed to load settings");
         }
       })
-      .catch(() => {
-        setSaveResult({ ok: false, message: "Failed to load settings" });
-      })
+      .catch(() => setLoadError("Failed to load settings"))
       .finally(() => setLoading(false));
   }, []);
 
-  const buildConnectionString = useCallback((): string => {
-    if (useRawUrl) {
-      return rawUrl.trim();
-    }
-    const enc = encodeURIComponent;
-    const user = fields.user.trim() || "postgres";
-    const password = fields.password;
-    const auth = password
-      ? `${enc(user)}:${enc(password)}`
-      : enc(user);
-    const host = fields.host.trim() || "localhost";
-    const port = fields.port.trim() || "5432";
-    const dbname = fields.dbname.trim() || "postgres";
-    return `postgresql://${auth}@${host}:${port}/${dbname}`;
-  }, [useRawUrl, rawUrl, fields]);
+  const buildPayload = () => ({
+    provider,
+    model_id: modelId.trim(),
+    dimensions: Number(dimensions),
+    base_url: baseUrl.trim() || null,
+    api_key: apiKey.trim() || null,
+  });
 
-  const connectionString =
-    mode === "external" ? buildConnectionString() : "";
+  const validate = (): string | null => {
+    if (!modelId.trim()) return "Model ID is required";
+    const parsed = Number(dimensions);
+    if (!Number.isInteger(parsed) || parsed < 1 || parsed > 8192) {
+      return "Dimensions must be an integer between 1 and 8192";
+    }
+    if (provider === "custom" && !baseUrl.trim()) {
+      return "Base URL is required for a custom provider";
+    }
+    return null;
+  };
 
   const handleTest = async () => {
-    if (!connectionString) return;
+    const validationError = validate();
+    if (validationError) {
+      setTestResult({ ok: false, message: validationError });
+      return;
+    }
+
     setTesting(true);
     setTestResult(null);
     try {
       const res = await fetch("/api/settings/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: connectionString }),
+        body: JSON.stringify(buildPayload()),
       });
       const data = await res.json();
       setTestResult({
         ok: data.success === true,
         message: data.success
-          ? data.message || "Connected successfully"
+          ? `${data.message} — returned ${data.dimensions} dimensions`
           : data.error || "Connection failed",
       });
     } catch {
-      setTestResult({ ok: false, message: "Network error while testing connection" });
+      setTestResult({ ok: false, message: "Network error while testing the model" });
     } finally {
       setTesting(false);
     }
   };
 
   const handleSave = async () => {
+    const validationError = validate();
+    if (validationError) {
+      setSaveResult({ ok: false, message: validationError });
+      return;
+    }
+
     setSaving(true);
     setSaveResult(null);
     try {
-      const payload =
-        mode === "internal"
-          ? { database: { mode: "internal" } }
-          : { database: { mode: "external", url: connectionString } };
-
       const res = await fetch("/api/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(buildPayload()),
       });
       const data = await res.json();
       if (data.success) {
-        setSettings(data.settings);
+        applySettings(data.settings);
         setSaveResult({
           ok: true,
-          message: "Settings saved. The application is using the new database now.",
+          message: "Model settings saved.",
         });
         setTestResult(null);
       } else {
@@ -171,7 +182,8 @@ export default function SettingsPage() {
   };
 
   const fieldClass =
-    "w-full px-4 py-2.5 bg-white dark:bg-[#1e1e1e] border border-neutral-200 dark:border-neutral-800 rounded-xl text-neutral-900 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-500 focus:outline-none focus:border-neutral-400 dark:focus:border-neutral-600 transition-colors font-mono text-sm";
+    "w-full px-4 py-2.5 bg-white dark:bg-[#1e1e1e] border border-neutral-200 dark:border-neutral-800 rounded-xl text-neutral-900 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-500 focus:outline-none focus:border-neutral-400 dark:focus:border-neutral-600 transition-colors text-sm";
+  const monoFieldClass = `${fieldClass} font-mono`;
 
   if (loading) {
     return (
@@ -205,274 +217,153 @@ export default function SettingsPage() {
             Settings
           </h1>
           <p className="text-sm text-neutral-500 dark:text-neutral-400">
-            Configure how Atlas Index stores your knowledge base.
+            Choose the embedding model used to index and search your knowledge base.
           </p>
         </div>
 
-        {/* Database section */}
+        {loadError && (
+          <div className="mb-6 flex items-center gap-2 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl text-sm text-red-600 dark:text-red-400">
+            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+            <span>{loadError}</span>
+          </div>
+        )}
+
         <div className="bg-white dark:bg-[#1e1e1e] border border-neutral-200 dark:border-neutral-800 rounded-2xl p-6 mb-6">
           <div className="flex items-center gap-3 mb-5">
             <div className="p-2 bg-neutral-100 dark:bg-neutral-800 rounded-lg">
-              <Database className="w-5 h-5 text-neutral-700 dark:text-neutral-300" />
+              <Cpu className="w-5 h-5 text-neutral-700 dark:text-neutral-300" />
             </div>
             <div>
               <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
-                Database
+                Embedding model
               </h2>
               <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                Where your entries, categories and vector embeddings are stored.
+                Stored in the <code className="font-mono">settings</code> table and
+                shared by every entry.
               </p>
             </div>
           </div>
 
-          {/* Mode selector */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
-            <button
-              type="button"
-              onClick={() => {
-                setMode("internal");
-                setTestResult(null);
-                setSaveResult(null);
-              }}
-              className={`text-left p-4 rounded-xl border-2 transition-all ${
-                mode === "internal"
-                  ? "border-neutral-900 dark:border-neutral-50 bg-neutral-50 dark:bg-neutral-800/50"
-                  : "border-neutral-200 dark:border-neutral-800 hover:border-neutral-300 dark:hover:border-neutral-700"
-              }`}
-            >
-              <div className="flex items-center gap-2 mb-1.5">
-                <Server
-                  className={`w-4 h-4 ${
-                    mode === "internal"
-                      ? "text-neutral-900 dark:text-neutral-50"
-                      : "text-neutral-400"
-                  }`}
-                />
-                <span className="font-medium text-sm text-neutral-900 dark:text-neutral-100">
-                  Internal (default)
-                </span>
-                {settings?.database.mode === "internal" && mode === "internal" && (
-                  <CheckCircle className="w-4 h-4 text-green-500 ml-auto" />
-                )}
-              </div>
-              <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed">
-                PostgreSQL with pgvector runs inside the Atlas container. No
-                external services needed.
-              </p>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setMode("external");
-                setTestResult(null);
-                setSaveResult(null);
-              }}
-              className={`text-left p-4 rounded-xl border-2 transition-all ${
-                mode === "external"
-                  ? "border-neutral-900 dark:border-neutral-50 bg-neutral-50 dark:bg-neutral-800/50"
-                  : "border-neutral-200 dark:border-neutral-800 hover:border-neutral-300 dark:hover:border-neutral-700"
-              }`}
-            >
-              <div className="flex items-center gap-2 mb-1.5">
-                <Globe
-                  className={`w-4 h-4 ${
-                    mode === "external"
-                      ? "text-neutral-900 dark:text-neutral-50"
-                      : "text-neutral-400"
-                  }`}
-                />
-                <span className="font-medium text-sm text-neutral-900 dark:text-neutral-100">
-                  External PostgreSQL
-                </span>
-                {settings?.database.mode === "external" && mode === "external" && (
-                  <CheckCircle className="w-4 h-4 text-green-500 ml-auto" />
-                )}
-              </div>
-              <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed">
-                Connect to an existing PostgreSQL server (with the pgvector
-                extension) instead of the internal one.
-              </p>
-            </button>
-          </div>
-
-          {/* Internal mode info */}
-          {mode === "internal" && (
-            <div className="p-4 bg-neutral-50 dark:bg-neutral-800/50 border border-neutral-200 dark:border-neutral-800 rounded-xl">
-              <div className="flex gap-3">
-                <Database className="w-4 h-4 text-neutral-500 mt-0.5 flex-shrink-0" />
-                <div className="text-sm text-neutral-600 dark:text-neutral-400 leading-relaxed">
-                  The internal database is managed automatically inside the
-                  Atlas container. Your data persists in a Docker volume across
-                  restarts. Ollama and the embedding model also run inside the
-                  same container, so everything works completely offline.
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* External mode configuration */}
-          {mode === "external" && (
-            <div className="space-y-5">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-neutral-700 dark:text-neutral-300">
-                  Connection details
-                </span>
-                <label className="flex items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={useRawUrl}
-                    onChange={(e) => setUseRawUrl(e.target.checked)}
-                    className="rounded border-neutral-300 dark:border-neutral-700"
-                  />
-                  Use connection string instead
-                </label>
-              </div>
-
-              {useRawUrl ? (
-                <div className="space-y-2">
-                  <label className="flex items-center gap-2 text-sm font-medium text-neutral-700 dark:text-neutral-300">
-                    <SquareTerminal className="w-4 h-4" />
-                    Connection string
-                  </label>
-                  <input
-                    type="text"
-                    value={rawUrl}
-                    onChange={(e) => setRawUrl(e.target.value)}
-                    placeholder="postgresql://user:password@host:5432/database?sslmode=require"
-                    className={fieldClass}
-                    spellCheck={false}
-                  />
-                  <p className="text-xs text-neutral-400 dark:text-neutral-500">
-                    Extra options such as SSL can be passed as URL parameters
-                    (e.g. ?sslmode=require). The server must have the pgvector
-                    extension installed.
-                  </p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <label className="flex items-center gap-2 text-sm font-medium text-neutral-700 dark:text-neutral-300">
-                      <Globe className="w-4 h-4" />
-                      Host
-                    </label>
-                    <input
-                      type="text"
-                      value={fields.host}
-                      onChange={(e) => setFields({ ...fields, host: e.target.value })}
-                      placeholder="localhost"
-                      className={fieldClass}
-                      spellCheck={false}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="flex items-center gap-2 text-sm font-medium text-neutral-700 dark:text-neutral-300">
-                      <Hash className="w-4 h-4" />
-                      Port
-                    </label>
-                    <input
-                      type="text"
-                      value={fields.port}
-                      onChange={(e) => setFields({ ...fields, port: e.target.value })}
-                      placeholder="5432"
-                      className={fieldClass}
-                      spellCheck={false}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="flex items-center gap-2 text-sm font-medium text-neutral-700 dark:text-neutral-300">
-                      <User className="w-4 h-4" />
-                      Username
-                    </label>
-                    <input
-                      type="text"
-                      value={fields.user}
-                      onChange={(e) => setFields({ ...fields, user: e.target.value })}
-                      placeholder="postgres"
-                      className={fieldClass}
-                      spellCheck={false}
-                      autoComplete="off"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="flex items-center gap-2 text-sm font-medium text-neutral-700 dark:text-neutral-300">
-                      <KeyRound className="w-4 h-4" />
-                      Password
-                    </label>
-                    <input
-                      type="password"
-                      value={fields.password}
-                      onChange={(e) => setFields({ ...fields, password: e.target.value })}
-                      placeholder="••••••••"
-                      className={fieldClass}
-                      autoComplete="new-password"
-                    />
-                  </div>
-                  <div className="space-y-2 sm:col-span-2">
-                    <label className="flex items-center gap-2 text-sm font-medium text-neutral-700 dark:text-neutral-300">
-                      <Database className="w-4 h-4" />
-                      Database name
-                    </label>
-                    <input
-                      type="text"
-                      value={fields.dbname}
-                      onChange={(e) => setFields({ ...fields, dbname: e.target.value })}
-                      placeholder="atlasdb"
-                      className={fieldClass}
-                      spellCheck={false}
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* Connection string preview */}
-              {connectionString && (
-                <div className="p-3 bg-neutral-50 dark:bg-neutral-900/60 border border-neutral-200 dark:border-neutral-800 rounded-lg">
-                  <p className="text-xs font-medium text-neutral-500 dark:text-neutral-400 mb-1">
-                    Connection string
-                  </p>
-                  <p className="text-xs font-mono break-all text-neutral-700 dark:text-neutral-300">
-                    {connectionString}
-                  </p>
-                </div>
-              )}
-
-              <div className="flex flex-wrap items-center gap-3">
-                <button
-                  type="button"
-                  onClick={handleTest}
-                  disabled={testing || !connectionString}
-                  className="inline-flex items-center gap-2 h-9 px-4 bg-white dark:bg-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-700 text-neutral-700 dark:text-neutral-300 text-sm font-medium rounded-full border border-neutral-200 dark:border-neutral-700 shadow-sm transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {testing ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <FlaskConical className="w-4 h-4" />
+          {/* Provider selector */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
+            {PROVIDERS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => {
+                  setProvider(option.value);
+                  setTestResult(null);
+                  setSaveResult(null);
+                  if (!baseUrl.trim()) {
+                    setBaseUrl(DEFAULT_BASE_URLS[option.value]);
+                  }
+                }}
+                className={`text-left p-4 rounded-xl border-2 transition-all ${
+                  provider === option.value
+                    ? "border-neutral-900 dark:border-neutral-50 bg-neutral-50 dark:bg-neutral-800/50"
+                    : "border-neutral-200 dark:border-neutral-800 hover:border-neutral-300 dark:hover:border-neutral-700"
+                }`}
+              >
+                <div className="flex items-center gap-2 mb-1.5">
+                  <span className="font-medium text-sm text-neutral-900 dark:text-neutral-100">
+                    {option.label}
+                  </span>
+                  {provider === option.value && (
+                    <CheckCircle className="w-4 h-4 text-green-500 ml-auto" />
                   )}
-                  Test connection
-                </button>
+                </div>
+                <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed">
+                  {option.description}
+                </p>
+              </button>
+            ))}
+          </div>
 
-                {testResult && (
-                  <div
-                    className={`flex items-center gap-2 text-sm ${
-                      testResult.ok
-                        ? "text-green-600 dark:text-green-400"
-                        : "text-red-600 dark:text-red-400"
-                    }`}
-                  >
-                    {testResult.ok ? (
-                      <CheckCircle className="w-4 h-4" />
-                    ) : (
-                      <XCircle className="w-4 h-4" />
-                    )}
-                    <span className="break-all">{testResult.message}</span>
-                  </div>
-                )}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-sm font-medium text-neutral-700 dark:text-neutral-300">
+                <Cpu className="w-4 h-4" />
+                Model ID
+              </label>
+              <input
+                type="text"
+                value={modelId}
+                onChange={(e) => setModelId(e.target.value)}
+                placeholder="nomic-embed-text"
+                className={monoFieldClass}
+                spellCheck={false}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-sm font-medium text-neutral-700 dark:text-neutral-300">
+                <Hash className="w-4 h-4" />
+                Dimensions
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={8192}
+                value={dimensions}
+                onChange={(e) => setDimensions(e.target.value)}
+                placeholder="768"
+                className={monoFieldClass}
+              />
+            </div>
+
+            <div className="space-y-2 sm:col-span-2">
+              <label className="flex items-center gap-2 text-sm font-medium text-neutral-700 dark:text-neutral-300">
+                <Globe className="w-4 h-4" />
+                Base URL
+              </label>
+              <input
+                type="text"
+                value={baseUrl}
+                onChange={(e) => setBaseUrl(e.target.value)}
+                placeholder={
+                  provider === "ollama"
+                    ? "Uses OLLAMA_HOST (e.g. http://ollama:11434)"
+                    : DEFAULT_BASE_URLS[provider] || "https://example.com/v1"
+                }
+                className={monoFieldClass}
+                spellCheck={false}
+              />
+              <p className="text-xs text-neutral-400 dark:text-neutral-500">
+                Leave empty for Ollama to use the <code className="font-mono">OLLAMA_HOST</code>{" "}
+                environment variable.
+              </p>
+            </div>
+
+            {provider !== "ollama" && (
+              <div className="space-y-2 sm:col-span-2">
+                <label className="flex items-center gap-2 text-sm font-medium text-neutral-700 dark:text-neutral-300">
+                  <KeyRound className="w-4 h-4" />
+                  API key
+                </label>
+                <input
+                  type="password"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder="sk-..."
+                  className={monoFieldClass}
+                  autoComplete="new-password"
+                />
               </div>
+            )}
+          </div>
+
+          {staleEntries > 0 && (
+            <div className="mt-6 flex gap-3 p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl">
+              <RefreshCw className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
+              <p className="text-sm text-amber-700 dark:text-amber-300 leading-relaxed">
+                {staleEntries} {staleEntries === 1 ? "entry was" : "entries were"}{" "}
+                embedded with a different model. Re-index them from the entry API
+                (<code className="font-mono">/api/entries/generate-embedding</code>)
+                after saving the new model.
+              </p>
             </div>
           )}
 
-          {/* Save */}
           <div className="flex flex-wrap items-center gap-3 pt-6 mt-6 border-t border-neutral-100 dark:border-neutral-800">
             <button
               type="button"
@@ -486,6 +377,20 @@ export default function SettingsPage() {
                 <Save className="w-4 h-4" />
               )}
               Save settings
+            </button>
+
+            <button
+              type="button"
+              onClick={handleTest}
+              disabled={testing}
+              className="inline-flex items-center gap-2 h-9 px-4 bg-white dark:bg-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-700 text-neutral-700 dark:text-neutral-300 text-sm font-medium rounded-full border border-neutral-200 dark:border-neutral-700 shadow-sm transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {testing ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <FlaskConical className="w-4 h-4" />
+              )}
+              Test model
             </button>
 
             {saveResult && (
@@ -504,13 +409,30 @@ export default function SettingsPage() {
                 <span>{saveResult.message}</span>
               </div>
             )}
+
+            {testResult && (
+              <div
+                className={`flex items-center gap-2 text-sm ${
+                  testResult.ok
+                    ? "text-green-600 dark:text-green-400"
+                    : "text-red-600 dark:text-red-400"
+                }`}
+              >
+                {testResult.ok ? (
+                  <CheckCircle className="w-4 h-4" />
+                ) : (
+                  <XCircle className="w-4 h-4" />
+                )}
+                <span className="break-all">{testResult.message}</span>
+              </div>
+            )}
           </div>
         </div>
 
         <p className="text-xs text-neutral-400 dark:text-neutral-500 text-center">
-          Changes take effect immediately — no restart required. Switching the
-          database does not move existing data; re-index your entries if you
-          switch storage.
+          Embeddings are stored per chunk together with the model that produced
+          them. Changing the model does not delete existing vectors; re-index an
+          entry to make it searchable with the new model.
         </p>
       </div>
     </div>

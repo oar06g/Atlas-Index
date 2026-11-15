@@ -1,11 +1,12 @@
-import { Pool } from "pg";
-import { getSettings } from "@/app/lib/config";
+import { Pool, type PoolClient } from "pg";
 
 /**
- * Build the connection string for the in-container PostgreSQL instance.
- * Explicit DATABASE_URL wins so the container can still be configured via env.
+ * Build the PostgreSQL connection string.
+ *
+ * The database is a dedicated service (see compose.yml), so the connection is
+ * configured purely through environment variables (or an explicit DATABASE_URL).
  */
-function buildInternalUrl(): string {
+function buildConnectionString(): string {
   if (process.env.DATABASE_URL) {
     return process.env.DATABASE_URL;
   }
@@ -17,56 +18,36 @@ function buildInternalUrl(): string {
   return `postgresql://${user}:${password}@${host}:${port}/${database}`;
 }
 
-const INTERNAL_DATABASE_URL = buildInternalUrl();
+const CONNECTION_STRING = buildConnectionString();
 
 let pool: Pool | null = null;
-let poolUrl: string | null = null;
 
-async function resolveConnectionString(): Promise<string> {
-  const settings = await getSettings();
-  if (settings.database.mode === "external" && settings.database.url) {
-    return settings.database.url;
-  }
-  return INTERNAL_DATABASE_URL;
-}
-
-async function getPool(): Promise<Pool> {
-  const connectionString = await resolveConnectionString();
-  if (!pool || poolUrl !== connectionString) {
-    const oldPool = pool;
-    pool = new Pool({ connectionString });
-    poolUrl = connectionString;
-    if (oldPool) {
-      // Drain in-flight queries, then close the previous pool.
-      setTimeout(() => {
-        oldPool.end().catch(() => {});
-      }, 5000).unref();
-    }
+function getPool(): Pool {
+  if (!pool) {
+    pool = new Pool({ connectionString: CONNECTION_STRING });
   }
   return pool;
 }
 
 export const db = {
-  query: async (text: string, params?: unknown[]) => {
-    const p = await getPool();
-    return p.query(text, params);
+  query: (text: string, params?: unknown[]) => getPool().query(text, params),
+
+  /**
+   * Run a set of statements inside a single transaction. The callback receives
+   * a dedicated client, so every query inside it uses the same connection.
+   */
+  transaction: async <T>(fn: (client: PoolClient) => Promise<T>): Promise<T> => {
+    const client = await getPool().connect();
+    try {
+      await client.query("BEGIN");
+      const result = await fn(client);
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
   },
 };
-
-/**
- * Verify that a PostgreSQL connection string is reachable.
- * Used by the settings UI to test external connections before saving.
- */
-export async function testDatabaseConnection(
-  connectionString: string
-): Promise<void> {
-  const probe = new Pool({
-    connectionString,
-    connectionTimeoutMillis: 5000,
-  });
-  try {
-    await probe.query("SELECT 1");
-  } finally {
-    await probe.end().catch(() => {});
-  }
-}

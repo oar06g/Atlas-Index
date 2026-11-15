@@ -1,6 +1,10 @@
 #!/bin/sh
 set -eu
 
+# Pull the embedding model on startup (only downloads when missing) and keep
+# the Ollama server in the foreground so Docker can supervise it.
+OLLAMA_MODEL="${OLLAMA_MODEL:-nomic-embed-text}"
+
 ollama serve &
 ollama_pid=$!
 
