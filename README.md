@@ -57,17 +57,32 @@ An entry is saved immediately with `status = pending`, split into 1,200-characte
 chunks with 200-character overlap, embedded in small batches, and stored with the
 `model_id` that produced each vector. Search only considers chunks from the
 model currently configured, so entries must be re-indexed after a model change.
-The schema is defined in [`queries/init.sql`](queries/init.sql).
+The schema is embedded in [`compose.yml`](compose.yml) so the file works on its
+own, and mirrored in [`queries/init.sql`](queries/init.sql) for manual use.
 
 ## Quick start
 
-Requires Docker with Compose v2 and roughly 2 GB of free disk space.
+Requires Docker with Compose v2.23.1+ and roughly 2 GB of free disk space.
+
+### Run the published image
+
+The Compose file embeds the database schema and the Ollama bootstrap script, so
+it can run on its own without cloning the repository:
+
+```bash
+mkdir atlas-index
+cd atlas-index
+curl -fsSLO https://raw.githubusercontent.com/oar06g/Atlas-Index/main/compose.yml
+docker compose up -d
+```
+
+### Build from source
 
 ```bash
 git clone https://github.com/oar06g/Atlas-Index.git
 cd Atlas-Index
 cp .env.example .env        # optional; defaults are built in
-docker compose up --build
+docker compose -f compose.yml -f compose.build.yml up --build
 ```
 
 Open <http://localhost:3000>. The first launch pulls the `nomic-embed-text`
@@ -91,16 +106,16 @@ docker pull ghcr.io/oar06g/atlas-index:latest
 > Package visibility is set once by the maintainer under the repository's package
 > settings. It must be **Public** for anonymous `docker pull` to work.
 
-The application container still requires the `db` and `ollama` services provided
-by [`compose.yml`](compose.yml). To use a published image instead of building
-from source, set the tag in `.env` and start the stack without a local build:
+The default `compose.yml` already uses `ghcr.io/oar06g/atlas-index:latest`, and
+it embeds the database schema and Ollama startup script, so the raw file is
+self-contained. To pin a specific tag, set it in `.env`:
 
 ```bash
 # .env
-ATLAS_IMAGE=ghcr.io/oar06g/atlas-index:latest
+ATLAS_IMAGE=ghcr.io/oar06g/atlas-index:v1.0.0
 
-# start the stack
-docker compose up -d --no-build
+# start or update the stack
+docker compose up -d
 ```
 
 ## Configuration
@@ -118,6 +133,7 @@ All environment variables are optional; see [`.env.example`](.env.example).
 | `EMBED_BATCH_SIZE` | `4` | Chunks per embedding request |
 | `EMBED_TIMEOUT_MS` | `120000` | Request timeout; failed batches are retried and split |
 | `NEXT_PUBLIC_APP_URL` | `http://localhost:3000` | Public application URL |
+| `ATLAS_IMAGE` | `ghcr.io/oar06g/atlas-index:latest` | Application image; pin a tag or use a local build |
 
 The active embedding provider, model, dimensions and API key are stored in the
 `settings` table and edited at `/settings`. Dimensions must match the model

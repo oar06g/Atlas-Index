@@ -1,5 +1,8 @@
+-- Atlas Index database schema.
+-- Keep the queries/init.sql and compose.yml (init_sql) copies identical.
+
 CREATE EXTENSION IF NOT EXISTS vector;
-CREATE EXTENSION IF NOT EXISTS "pgcrypto"; -- لـ gen_random_uuid()
+CREATE EXTENSION IF NOT EXISTS "pgcrypto"; -- gen_random_uuid()
 
 CREATE TABLE IF NOT EXISTS categories (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -56,8 +59,7 @@ CREATE TABLE IF NOT EXISTS settings (
 
 INSERT INTO settings (id) VALUES (1) ON CONFLICT DO NOTHING;
 
-
--- فهارس علائقية
+-- Indexes
 CREATE INDEX IF NOT EXISTS idx_entries_category ON entries(category_id);
 CREATE INDEX IF NOT EXISTS idx_entries_status ON entries(status);
 CREATE INDEX IF NOT EXISTS idx_entries_current_model ON entries(current_model_id);

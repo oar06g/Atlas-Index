@@ -27,6 +27,36 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
+      - name: Validate standalone Compose file
+        run: |
+          mkdir -p /tmp/atlas-raw
+          cp compose.yml /tmp/atlas-raw/
+          (cd /tmp/atlas-raw && docker compose config --quiet)
+
+          docker compose -f compose.yml -f compose.build.yml config --quiet
+
+          docker compose -f compose.yml config --format json > /tmp/atlas-compose.json
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          data = json.loads(pathlib.Path("/tmp/atlas-compose.json").read_text())
+          embedded = data["configs"]["init_sql"]["content"]
+          expected = pathlib.Path("queries/init.sql").read_text()
+          if embedded != expected:
+              print("compose.yml init_sql is out of sync with queries/init.sql")
+              sys.exit(1)
+
+          embedded_script = data["configs"]["ollama_entrypoint"]["content"].replace("$$", "$")
+          expected_script = pathlib.Path("scripts/ollama-entrypoint.sh").read_text()
+          if embedded_script != expected_script:
+              print("compose.yml ollama_entrypoint is out of sync with scripts/ollama-entrypoint.sh")
+              sys.exit(1)
+
+          print("Compose file is standalone; schema and bootstrap copies match.")
+          PY
+
       - name: Set up Node.js
         uses: actions/setup-node@v5
         with:

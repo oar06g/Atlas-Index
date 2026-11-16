@@ -2,7 +2,7 @@ name: atlas-index
 
 services:
   # ---------------------------------------------------------------------------
-  # PostgreSQL 17 + pgvector — stores entries, categories and embeddings.
+  # PostgreSQL 17 + pgvector - stores entries, categories and embeddings.
   # ---------------------------------------------------------------------------
   db:
     image: pgvector/pgvector:pg17
@@ -16,9 +16,11 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      # The schema is idempotent and is applied automatically the first time
-      # the data volume is initialised.
-      - ./queries/init.sql:/docker-entrypoint-initdb.d/10-init.sql:ro
+    configs:
+      # The schema is embedded below so this Compose file works on its own.
+      # It is applied automatically the first time the data volume is created.
+      - source: init_sql
+        target: /docker-entrypoint-initdb.d/10-init.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
@@ -26,7 +28,7 @@ services:
       retries: 5
 
   # ---------------------------------------------------------------------------
-  # Ollama — local embedding service. Pulls the configured model on startup.
+  # Ollama - local embedding service. Pulls the configured model on startup.
   # ---------------------------------------------------------------------------
   ollama:
     image: ollama/ollama:latest
@@ -40,7 +42,9 @@ services:
       - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
-      - ./scripts/ollama-entrypoint.sh:/usr/local/bin/ollama-entrypoint.sh:ro
+    configs:
+      - source: ollama_entrypoint
+        target: /usr/local/bin/ollama-entrypoint.sh
     entrypoint:
       - /bin/sh
       - -c
@@ -56,18 +60,16 @@ services:
       start_period: 30s
 
   # ---------------------------------------------------------------------------
-  # Atlas Index — Next.js web UI + API.
+  # Atlas Index - Next.js web UI + API.
+  #
+  # Uses the published image by default. To build from source, use the build
+  # override: docker compose -f compose.yml -f compose.build.yml up --build
   #
   # Comment this service out if you prefer to run the app locally with
   # `npm run dev` while keeping only `db` and `ollama` in Docker.
   # ---------------------------------------------------------------------------
   app:
-    # Set ATLAS_IMAGE to run a published image instead of building locally,
-    # e.g. ATLAS_IMAGE=ghcr.io/oar06g/atlas-index:latest (with --no-build).
-    image: ${ATLAS_IMAGE:-atlas-index:local}
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ${ATLAS_IMAGE:-ghcr.io/oar06g/atlas-index:latest}
     container_name: atlas-index
     restart: unless-stopped
     depends_on:
@@ -107,3 +109,115 @@ services:
 volumes:
   postgres_data:
   ollama_data:
+
+configs:
+  # Keep in sync with queries/init.sql.
+  init_sql:
+    content: |
+      -- Atlas Index database schema.
+      -- Keep the queries/init.sql and compose.yml (init_sql) copies identical.
+
+      CREATE EXTENSION IF NOT EXISTS vector;
+      CREATE EXTENSION IF NOT EXISTS "pgcrypto"; -- gen_random_uuid()
+
+      CREATE TABLE IF NOT EXISTS categories (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          name TEXT NOT NULL UNIQUE,
+          created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS entries (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          title TEXT NOT NULL,
+          slug TEXT UNIQUE,
+          content TEXT NOT NULL,
+          summary TEXT,
+          type TEXT NOT NULL DEFAULT 'manual'
+              CHECK (type IN ('manual', 'file', 'url')),
+          status TEXT NOT NULL DEFAULT 'pending'
+              CHECK (status IN ('pending', 'processing', 'embedded', 'failed')),
+          error_message TEXT,
+          category_id UUID REFERENCES categories(id) ON DELETE SET NULL,
+          tags TEXT[] DEFAULT '{}',
+          current_model_id TEXT,
+          chunks_total INT NOT NULL DEFAULT 0,
+          chunks_done INT NOT NULL DEFAULT 0,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      -- For databases created before the progress columns were introduced.
+      ALTER TABLE entries ADD COLUMN IF NOT EXISTS chunks_total INT NOT NULL DEFAULT 0;
+      ALTER TABLE entries ADD COLUMN IF NOT EXISTS chunks_done INT NOT NULL DEFAULT 0;
+
+      CREATE TABLE IF NOT EXISTS entry_chunks (
+          id BIGSERIAL PRIMARY KEY,
+          entry_id UUID NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
+          chunk_index INT NOT NULL,
+          content TEXT NOT NULL,
+          embedding vector NOT NULL,
+          model_id TEXT NOT NULL,
+          created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS settings (
+          id INT PRIMARY KEY DEFAULT 1,
+          provider TEXT NOT NULL DEFAULT 'ollama'
+              CHECK (provider IN ('ollama', 'openai', 'custom')),
+          model_id TEXT NOT NULL DEFAULT 'nomic-embed-text',
+          dimensions INT NOT NULL DEFAULT 768,
+          -- NULL means "use OLLAMA_HOST" for Ollama (or the provider default).
+          base_url TEXT DEFAULT NULL,
+          api_key TEXT,
+          updated_at TIMESTAMPTZ DEFAULT NOW(),
+          CONSTRAINT single_row CHECK (id = 1)
+      );
+
+      INSERT INTO settings (id) VALUES (1) ON CONFLICT DO NOTHING;
+
+      -- Indexes
+      CREATE INDEX IF NOT EXISTS idx_entries_category ON entries(category_id);
+      CREATE INDEX IF NOT EXISTS idx_entries_status ON entries(status);
+      CREATE INDEX IF NOT EXISTS idx_entries_current_model ON entries(current_model_id);
+      CREATE INDEX IF NOT EXISTS idx_entries_tags ON entries USING GIN(tags);
+      CREATE INDEX IF NOT EXISTS idx_entry_chunks_entry ON entry_chunks(entry_id);
+      CREATE INDEX IF NOT EXISTS idx_entry_chunks_model ON entry_chunks(model_id);
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_entry_chunks_unique
+      ON entry_chunks(entry_id, chunk_index);
+
+  # Keep in sync with scripts/ollama-entrypoint.sh.
+  ollama_entrypoint:
+    content: |
+      #!/bin/sh
+      # Ollama startup script. Keep the compose.yml and scripts/ollama-entrypoint.sh
+      # copies identical.
+      set -eu
+
+      # Pull the embedding model on startup (only downloads when missing) and keep
+      # the Ollama server in the foreground so Docker can supervise it.
+      OLLAMA_MODEL="$${OLLAMA_MODEL:-nomic-embed-text}"
+
+      ollama serve &
+      ollama_pid=$$!
+
+      cleanup() {
+        kill "$$ollama_pid" 2>/dev/null || true
+        wait "$$ollama_pid" 2>/dev/null || true
+      }
+
+      trap cleanup EXIT
+      trap 'exit 143' TERM
+      trap 'exit 130' INT
+
+      until ollama list >/dev/null 2>&1; do
+        if ! kill -0 "$$ollama_pid" 2>/dev/null; then
+          wait "$$ollama_pid"
+          exit 1
+        fi
+        echo "Waiting for Ollama..."
+        sleep 2
+      done
+
+      ollama pull "$$OLLAMA_MODEL"
+      wait "$$ollama_pid"

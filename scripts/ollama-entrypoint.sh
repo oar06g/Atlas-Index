@@ -1,4 +1,6 @@
 #!/bin/sh
+# Ollama startup script. Keep the compose.yml and scripts/ollama-entrypoint.sh
+# copies identical.
 set -eu
 
 # Pull the embedding model on startup (only downloads when missing) and keep

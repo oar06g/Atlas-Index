@@ -1,0 +1,14 @@
+# Build the application image locally instead of pulling it from GHCR.
+#
+# Usage:
+#   docker compose -f compose.yml -f compose.build.yml up --build
+#
+# The base compose.yml stays self-contained so it can be used on its own with
+# the published image.
+
+services:
+  app:
+    image: atlas-index:local
+    build:
+      context: .
+      dockerfile: Dockerfile
