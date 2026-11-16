@@ -136,7 +136,7 @@ export default function AtlasIndex() {
     e.preventDefault();
     if (!query.trim()) return;
 
-    router.push(`/search?q=${query}`)
+    router.push(`/search?q=${encodeURIComponent(query.trim())}`)
     setQuery('');
   };
 
