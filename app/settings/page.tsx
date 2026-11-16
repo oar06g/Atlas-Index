@@ -6,6 +6,7 @@ import {
   ArrowLeft,
   CheckCircle,
   Cpu,
+  Download,
   FlaskConical,
   Globe,
   Hash,
@@ -15,6 +16,7 @@ import {
   Save,
   XCircle,
 } from "lucide-react";
+import { useModelPull } from "@/app/_components/model-pull-provider";
 
 type EmbeddingProvider = "ollama" | "openai" | "custom";
 
@@ -61,16 +63,22 @@ const DEFAULT_BASE_URLS: Record<EmbeddingProvider, string> = {
 };
 
 export default function SettingsPage() {
+  const { startPull, isPulling } = useModelPull();
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
 
   const [provider, setProvider] = useState<EmbeddingProvider>("ollama");
+  const [savedProvider, setSavedProvider] = useState<EmbeddingProvider | null>(
+    null
+  );
   const [modelId, setModelId] = useState("");
   const [dimensions, setDimensions] = useState("768");
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [staleEntries, setStaleEntries] = useState(0);
+  const [pullModel, setPullModel] = useState("");
 
   const [testResult, setTestResult] = useState<TestResult | null>(null);
   const [saveResult, setSaveResult] = useState<TestResult | null>(null);
@@ -82,6 +90,7 @@ export default function SettingsPage() {
     setDimensions(String(settings.dimensions));
     setBaseUrl(settings.base_url ?? "");
     setApiKey(settings.api_key ?? "");
+    setPullModel((current) => current || settings.model_id);
   };
 
   useEffect(() => {
@@ -90,6 +99,7 @@ export default function SettingsPage() {
       .then((data) => {
         if (data.success) {
           applySettings(data.settings);
+          setSavedProvider(data.settings.provider);
           setStaleEntries(data.stale_entries ?? 0);
         } else {
           setLoadError(data.error || "Failed to load settings");
@@ -135,10 +145,13 @@ export default function SettingsPage() {
         body: JSON.stringify(buildPayload()),
       });
       const data = await res.json();
+      if (data.success && typeof data.dimensions === "number") {
+        setDimensions(String(data.dimensions));
+      }
       setTestResult({
         ok: data.success === true,
         message: data.success
-          ? `${data.message} — returned ${data.dimensions} dimensions`
+          ? `${data.message} — detected ${data.dimensions} dimensions. Save settings to apply.`
           : data.error || "Connection failed",
       });
     } catch {
@@ -166,6 +179,7 @@ export default function SettingsPage() {
       const data = await res.json();
       if (data.success) {
         applySettings(data.settings);
+        setSavedProvider(data.settings.provider);
         setSaveResult({
           ok: true,
           message: "Model settings saved.",
@@ -179,6 +193,12 @@ export default function SettingsPage() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const handlePull = () => {
+    const target = pullModel.trim();
+    if (!target) return;
+    void startPull(target);
   };
 
   const fieldClass =
@@ -427,6 +447,74 @@ export default function SettingsPage() {
               </div>
             )}
           </div>
+        </div>
+
+        <div className="bg-white dark:bg-[#1e1e1e] border border-neutral-200 dark:border-neutral-800 rounded-2xl p-6 mb-6">
+          <div className="flex items-center gap-3 mb-5">
+            <div className="p-2 bg-neutral-100 dark:bg-neutral-800 rounded-lg">
+              <Download className="w-5 h-5 text-neutral-700 dark:text-neutral-300" />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
+                Download a model
+              </h2>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                Pull a model into Ollama. Progress stays visible on every page
+                while the download runs.
+              </p>
+            </div>
+          </div>
+
+          {savedProvider !== "ollama" ? (
+            <div className="flex gap-3 p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl">
+              <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
+              <p className="text-sm text-amber-700 dark:text-amber-300 leading-relaxed">
+                Downloads use the saved Ollama host. Save Ollama as the
+                embedding provider before pulling a model.
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="flex flex-col sm:flex-row gap-3">
+                <input
+                  type="text"
+                  value={pullModel}
+                  onChange={(e) => setPullModel(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handlePull();
+                    }
+                  }}
+                  placeholder="bge-m3"
+                  className={monoFieldClass}
+                  spellCheck={false}
+                  disabled={isPulling}
+                />
+
+                <button
+                  type="button"
+                  onClick={handlePull}
+                  disabled={!pullModel.trim() || isPulling}
+                  className="inline-flex items-center justify-center gap-2 h-[42px] px-5 bg-neutral-900 dark:bg-neutral-50 hover:bg-neutral-800 dark:hover:bg-neutral-200 text-neutral-50 dark:text-neutral-900 text-sm font-medium rounded-xl shadow-sm transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                >
+                  {isPulling ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Download className="w-4 h-4" />
+                  )}
+                  {isPulling ? "Downloading..." : "Download model"}
+                </button>
+              </div>
+
+              <p className="text-xs text-neutral-400 dark:text-neutral-500 mt-3 leading-relaxed">
+                Recommended for stronger multilingual search:{" "}
+                <code className="font-mono">bge-m3</code> (1024 dimensions).
+                After the download, run <strong>Test model</strong> to detect the
+                dimensions, then save the settings.
+              </p>
+            </>
+          )}
         </div>
 
         <p className="text-xs text-neutral-400 dark:text-neutral-500 text-center">
