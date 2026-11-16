@@ -165,6 +165,12 @@ docker compose exec -T db psql -U atlas -d atlasdb \
 | `npm run build` | Production build |
 | `npm run start` | Serve the production build |
 | `npm run lint` | ESLint |
+| `npm run seed` | Seed the sample technical corpus (idempotent) |
+
+`npm run seed` connects directly to the database, embeds the sample entries with
+the model in Settings, and inserts them in one transaction. It skips entries
+whose title or slug already exists. Use `npm run seed -- --dry-run` to preview,
+or `npm run seed -- --limit=10` to try a smaller batch.
 
 ## API
 

@@ -8,6 +8,7 @@ import {
 const MAX_CHUNK_CHARS = 1200;
 const CHUNK_OVERLAP = 200;
 
+
 /**
  * Maximum time a single embedding request may take. If a batch takes longer,
  * the request is aborted and the queue retries it with smaller batches.
@@ -25,6 +26,30 @@ function fetchWithTimeout(
     ...init,
     signal: AbortSignal.timeout(EMBED_TIMEOUT_MS),
   });
+}
+
+const ollamaClients = new Map<
+  string,
+  { client: Ollama; embeddingClient: Ollama }
+>();
+
+function getOllamaClients(settings: ModelSettings) {
+  const host = resolveBaseUrl(settings);
+  let clients = ollamaClients.get(host);
+
+  if (!clients) {
+    clients = {
+      client: new Ollama({ host }),
+      embeddingClient: new Ollama({ host, fetch: fetchWithTimeout }),
+    };
+    ollamaClients.set(host, clients);
+  }
+
+  return clients;
+}
+
+export function getOllamaClient(settings: ModelSettings): Ollama {
+  return getOllamaClients(settings).client;
 }
 
 /**
@@ -83,11 +108,7 @@ async function embedWithOllama(
   texts: string[],
   settings: ModelSettings
 ): Promise<number[][]> {
-  const client = new Ollama({
-    host: resolveBaseUrl(settings),
-    fetch: fetchWithTimeout,
-  });
-  const response = await client.embed({
+  const response = await getOllamaClients(settings).embeddingClient.embed({
     model: settings.model_id,
     input: texts,
     keep_alive: process.env.OLLAMA_KEEP_ALIVE || "24h",
