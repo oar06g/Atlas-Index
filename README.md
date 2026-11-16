@@ -33,6 +33,8 @@ account is required, and your content never leaves the host.
   one-click retry; interrupted jobs resume after a restart.
 - **Provider-agnostic embeddings** — Ollama, OpenAI, or any OpenAI-compatible
   endpoint, configurable at runtime from the Settings page.
+- **In-app model downloads** — pull new Ollama models from Settings with a
+  streamed progress bar that stays visible while you navigate the app.
 - **Single-command deployment** with Docker Compose and a published container
   image on GHCR.
 - **Service health reporting** through `/api/status` and the in-app status panel.
@@ -187,6 +189,7 @@ or `npm run seed -- --limit=10` to try a smaller batch.
 | `GET` | `/api/settings` | Read embedding settings |
 | `POST` | `/api/settings` | Update embedding settings |
 | `POST` | `/api/settings/test` | Test an embedding configuration |
+| `POST` | `/api/ollama/pull` | Stream model download progress (`model`) |
 
 ## Contributing
 
