@@ -42,12 +42,11 @@ export default function CreateEntryPage() {
         setCategoriesError(null);
         
         const response = await fetch('/api/categories');
-        
-        /*if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }*/
-        
-        const data = await response.json();
+        const data = await response.json().catch(() => null);
+
+        if (!response.ok) {
+          throw new Error(data?.error || `HTTP ${response.status}`);
+        }
         
         // Handle different response formats
         let categoriesArray: Category[] = [];
@@ -100,7 +99,7 @@ export default function CreateEntryPage() {
       } else {
         const errorData = await response.json().catch(() => ({}));
         console.error('Failed to create category:', errorData);
-        alert(`Failed to create category: ${errorData.message || 'Unknown error'}`);
+        alert(`Failed to create category: ${errorData.error || errorData.message || `HTTP ${response.status}`}`);
         return null;
       }
     } catch (error) {
